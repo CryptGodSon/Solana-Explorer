@@ -12,3 +12,14 @@ Note that this program assumes you're exploring transactions on the Solana mainn
 # Python Version
 
 This code should work with the latest version of Python (as of my knowledge cutoff in September 2021). However, if you encounter any errors or issues, let me know and I'll do my best to help you troubleshoot them!
+
+
+# GUI 
+To create a front-end executable for this program, you can use a Python library like PyInstaller or cx_Freeze to package the code into a standalone executable file.
+
+To create an executable file from this code using PyInstaller, you can run the following command in your terminal:
+------------
+pyinstaller --onefile --windowed <filename>.py
+------------
+
+This will create a standalone executable file that can be run on any computer without requiring Python or any dependencies to be installed.
