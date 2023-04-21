@@ -24,8 +24,8 @@ pyinstaller --onefile --windowed <filename>.py
 
 This will create a standalone executable file that can be run on any computer without requiring Python or any dependencies to be installed.
 
-# Improvements:
-  Sure, here are some possible improvements to the Solana transaction explorer program:
+# Improvements ? :
+  Possible improvements to the Solana transaction explorer program:
 
 1. Error handling: The current implementation only displays an error message if the API request fails. It would be more helpful to provide specific error messages for different types of errors, such as a malformed transaction ID or a network error. You could use try-except blocks to catch different types of exceptions and display appropriate error messages to the user.
 
