@@ -1,3 +1,4 @@
+! (http://https://comprarcriptomoedas.com/content/images/2021/03/Solana-Logo.png)
 # Solana Transaction Explorer
 This is a Python program that allows users to explore transactions on the Solana blockchain using the Solana API. The program provides a simple graphical user interface that allows users to enter a transaction ID and explore the details of that transaction, including the sender, recipient, and amount transferred.
 
