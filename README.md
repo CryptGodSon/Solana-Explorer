@@ -18,8 +18,8 @@ This code should work with the latest version of Python (as of my knowledge cuto
 To create a front-end executable for this program, you can use a Python library like PyInstaller or cx_Freeze to package the code into a standalone executable file.
 
 To create an executable file from this code using PyInstaller, you can run the following command in your terminal:
-------------
+
 pyinstaller --onefile --windowed <filename>.py
-------------
+
 
 This will create a standalone executable file that can be run on any computer without requiring Python or any dependencies to be installed.
