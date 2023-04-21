@@ -2,13 +2,13 @@
 This is a Python program that allows users to explore transactions on the Solana blockchain using the Solana API. The program provides a simple graphical user interface that allows users to enter a transaction ID and explore the details of that transaction, including the sender, recipient, and amount transferred.
 
 # Features
-Explore transactions on the Solana blockchain using the Solana API
-View transaction details, including sender, recipient, and amount transferred
-Simple graphical user interface using the tkinter library
-Error handling to handle network errors and invalid input
-Input validation to ensure that the user enters a valid transaction ID
-Caching mechanism to avoid unnecessary API requests for previously requested transactions
-Batch processing feature to explore multiple transactions at once
+-Explore transactions on the Solana blockchain using the Solana API
+-View transaction details, including sender, recipient, and amount transferred
+-Simple graphical user interface using the tkinter library
+-Error handling to handle network errors and invalid input
+-Input validation to ensure that the user enters a valid transaction ID
+-Caching mechanism to avoid unnecessary API requests for previously requested transactions
+-Batch processing feature to explore multiple transactions at once
 
 # Requirements
 To run this program, you will need:
