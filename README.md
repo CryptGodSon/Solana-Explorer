@@ -145,12 +145,12 @@ stays responsive.
 ```python
 from solana_explorer import SolanaExplorer
 
-explorer = SolanaExplorer(endpoint="mainnet-beta")   # or "devnet", or an RPC URL
+explorer = SolanaExplorer(endpoint="mainnet-beta")  # or "devnet", or an RPC URL
 
 tx = explorer.get_transaction("5gg257Zu...")
 print(tx.success, tx.fee_sol, tx.block_time)
-for transfer in tx.transfers:
-    print(transfer.asset, transfer.amount, transfer.mint, transfer.source, "->", transfer.destination)
+for t in tx.transfers:
+    print(t.asset, t.amount, t.mint, t.source, "->", t.destination)
 
 # Batch lookup: errors are returned per signature instead of raised
 for result in explorer.get_transactions(["sig1", "sig2"]):
