@@ -180,11 +180,14 @@ dedicated RPC provider and pass its URL with `--rpc-url` or `SOLANA_RPC_URL`.
 ## How it works
 
 The tool uses the standard Solana JSON-RPC methods `getTransaction` (with
-`jsonParsed` encoding and `maxSupportedTransactionVersion: 0`, so versioned
-transactions work), `getAccountInfo` and `getSignaturesForAddress`. Transfers are
-decoded from the node's parsed instructions. For a plain SPL `transfer`, which
-carries no mint, the mint and decimals are recovered from the transaction's token
-balances.
+`jsonParsed` encoding), `getAccountInfo` and `getSignaturesForAddress`. Legacy,
+v0 and newer transaction versions are all supported: if the node reports that a
+transaction needs a higher `maxSupportedTransactionVersion`, the client retries
+with that version and uses it from then on. Transfers are decoded from the node's
+parsed instructions. For a plain SPL `transfer`, which carries no mint, the mint
+and decimals are recovered from the transaction's token balances. For a failed
+transaction, the transfers are listed as attempted and reverted, because a
+failed transaction moves no funds apart from the fee.
 
 ## Project structure
 

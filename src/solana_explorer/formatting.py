@@ -103,7 +103,9 @@ def format_transaction(tx: TransactionDetails, endpoint: str, *, show_logs: bool
             unit = f"raw units of {unit}"
         transfers.append(f"  {format_amount(t.amount)} {unit}")
         transfers.append(f"      {t.source} -> {t.destination}")
-    lines += _section("Transfers", transfers, count=len(tx.transfers))
+    # A failed transaction is rolled back, so its instructions moved nothing.
+    title = "Transfers" if tx.success else "Attempted transfers (reverted - transaction failed)"
+    lines += _section(title, transfers, count=len(tx.transfers))
 
     lines += _section(
         "SOL balance changes",

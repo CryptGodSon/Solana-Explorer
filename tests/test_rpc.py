@@ -93,6 +93,31 @@ def test_get_transaction_requests_versioned_parsed_tx():
     assert params[1]["maxSupportedTransactionVersion"] == 0
 
 
+def version_error(required: int) -> FakeResponse:
+    message = (
+        f"Transaction version ({required}) is not supported by the requesting client. "
+        "Please try the request again with the following configuration parameter: "
+        f'"maxSupportedTransactionVersion": {required}'
+    )
+    error = {"code": -32015, "message": message}
+    return FakeResponse(200, {"jsonrpc": "2.0", "id": 1, "error": error})
+
+
+def test_get_transaction_upgrades_to_newer_version_and_remembers_it():
+    client, session = make_client(version_error(1), ok({"version": 1}), ok({"version": 0}))
+    assert client.get_transaction("Sig") == {"version": 1}
+    assert client.get_transaction("Other") == {"version": 0}
+    versions = [r["json"]["params"][1]["maxSupportedTransactionVersion"] for r in session.requests]
+    assert versions == [0, 1, 1]
+
+
+def test_version_error_is_not_retried_forever():
+    client, session = make_client(version_error(1), version_error(1))
+    with pytest.raises(RpcError):
+        client.get_transaction("Sig")
+    assert len(session.requests) == 2
+
+
 def test_get_signatures_for_address_options():
     client, session = make_client(ok([{"signature": "a"}]))
     assert client.get_signatures_for_address("Addr", limit=5, before="B") == [{"signature": "a"}]

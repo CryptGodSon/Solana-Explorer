@@ -55,3 +55,5 @@ def test_failed_transaction_report(raw_transaction, signature):
     raw_transaction["meta"]["err"] = {"InstructionError": [2, {"Custom": 1}]}
     report = format_transaction(TransactionDetails.from_rpc(signature, raw_transaction), MAINNET)
     assert 'FAILED - {"InstructionError":[2,{"Custom":1}]}' in report
+    assert "Attempted transfers (reverted - transaction failed) (3)" in report
+    assert "\nTransfers (" not in report

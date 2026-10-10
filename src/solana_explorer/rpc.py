@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import itertools
 import os
+import re
 import time
 from typing import Any
 
@@ -17,6 +18,9 @@ from .errors import InvalidInputError, RpcError, RpcTransportError
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 DEFAULT_COMMITMENT = "confirmed"
 _MAX_RETRY_AFTER = 30.0
+
+TRANSACTION_VERSION_NOT_SUPPORTED = -32015
+_VERSION_HINT = re.compile(r'"?maxSupportedTransactionVersion"?\s*:\s*(\d+)')
 
 
 def resolve_endpoint(cluster_or_url: str | None = None) -> str:
@@ -35,6 +39,14 @@ def resolve_endpoint(cluster_or_url: str | None = None) -> str:
         return CLUSTERS[name]
     choices = ", ".join(CLUSTERS)
     raise InvalidInputError(f"Unknown cluster {value!r}; use one of: {choices} or an http(s) URL")
+
+
+def _required_transaction_version(error: RpcError) -> int | None:
+    """Extract the version a node asks for in a "Transaction version not supported" error."""
+    if error.code != TRANSACTION_VERSION_NOT_SUPPORTED:
+        return None
+    match = _VERSION_HINT.search(error.message)
+    return int(match.group(1)) if match else None
 
 
 def cluster_name(endpoint: str) -> str | None:
@@ -64,6 +76,7 @@ class SolanaRpcClient:
         self.max_retries = max(0, max_retries)
         self.backoff = max(0.0, backoff)
         self.commitment = commitment
+        self.max_transaction_version = 0
         self._session = session or requests.Session()
         self._session.headers.setdefault("User-Agent", f"solana-explorer/{__version__}")
         self._ids = itertools.count(1)
@@ -138,7 +151,22 @@ class SolanaRpcClient:
     # -- typed helpers -----------------------------------------------------
 
     def get_transaction(self, signature: str) -> dict[str, Any] | None:
-        """``getTransaction`` with ``jsonParsed`` encoding (``None`` when not found)."""
+        """``getTransaction`` with ``jsonParsed`` encoding (``None`` when not found).
+
+        If the node reports that the transaction uses a newer version than we
+        advertised, the request is retried once with the version it asks for, and
+        that version is remembered for later calls.
+        """
+        try:
+            return self._get_transaction(signature)
+        except RpcError as exc:
+            required = _required_transaction_version(exc)
+            if required is None or required <= self.max_transaction_version:
+                raise
+            self.max_transaction_version = required
+            return self._get_transaction(signature)
+
+    def _get_transaction(self, signature: str) -> dict[str, Any] | None:
         return self.call(
             "getTransaction",
             [
@@ -146,7 +174,7 @@ class SolanaRpcClient:
                 {
                     "encoding": "jsonParsed",
                     "commitment": self.commitment,
-                    "maxSupportedTransactionVersion": 0,
+                    "maxSupportedTransactionVersion": self.max_transaction_version,
                 },
             ],
         )
