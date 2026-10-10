@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solana Explorer</title>
+  <meta name="description" content="Explore Solana transactions, accounts, tokens and blocks.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="brand" aria-label="Solana Explorer home">
+        <img src="/static/favicon.svg" alt="" width="28" height="28">
+        <span>Solana<strong>Explorer</strong></span>
+      </a>
+      <form class="search search-compact" id="header-search" role="search">
+        <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 0 1 5.9 12.1l4.2 4.2-1.4 1.4-4.2-4.2A7.5 7.5 0 1 1 10.5 3Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Z"/></svg>
+        <input name="q" type="search" autocomplete="off" spellcheck="false"
+               placeholder="Search transaction, address, token or block" aria-label="Search">
+      </form>
+      <div class="topbar-actions">
+        <label class="cluster-picker">
+          <span class="dot" aria-hidden="true"></span>
+          <select id="cluster-select" aria-label="Cluster"></select>
+        </label>
+        <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle color theme" title="Toggle theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="app" class="container" aria-live="polite"></main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <span>Solana Explorer <span id="app-version"></span> &middot; open source, MIT licensed</span>
+      <a href="https://github.com/CryptGodSon/Solana-Explorer" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </div>
+  </footer>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

@@ -62,6 +62,9 @@ class Instruction:
     program: str
     type: str | None
     inner: bool
+    info: Any = None  # decoded arguments when the node can parse the program
+    accounts: tuple[str, ...] = ()  # account list for instructions the node cannot parse
+    data: str | None = None  # base58 instruction data for unparsed instructions
 
 
 @dataclass(frozen=True)
@@ -217,8 +220,21 @@ def _parse_instruction(position: str, ix: dict[str, Any], inner: bool) -> Instru
     program_id = ix.get("programId", "unknown")
     program = KNOWN_PROGRAMS.get(program_id) or ix.get("program") or program_id
     parsed = ix.get("parsed")
-    ix_type = parsed.get("type") if isinstance(parsed, dict) else None
-    return Instruction(position, program_id, program, ix_type, inner)
+    if isinstance(parsed, dict):
+        ix_type, info = parsed.get("type"), parsed.get("info")
+    else:
+        # e.g. the Memo program, whose "parsed" value is the memo text itself
+        ix_type, info = None, parsed
+    return Instruction(
+        position,
+        program_id,
+        program,
+        ix_type,
+        inner,
+        info=info,
+        accounts=tuple(ix.get("accounts") or ()),
+        data=ix.get("data"),
+    )
 
 
 def _parse_transfer(
@@ -402,4 +418,243 @@ class SignatureInfo:
             error=raw.get("err"),
             memo=raw.get("memo"),
             confirmation_status=raw.get("confirmationStatus"),
+        )
+
+
+# -- blocks -------------------------------------------------------------------
+
+VOTE_PROGRAM_ID = "Vote111111111111111111111111111111111111111"
+
+
+@dataclass(frozen=True)
+class BlockTransaction:
+    signature: str
+    success: bool
+    fee_lamports: int
+    signer: str | None
+    is_vote: bool
+
+    @classmethod
+    def from_rpc(cls, raw: dict[str, Any]) -> BlockTransaction:
+        """Build from one entry of a ``getBlock`` result with ``transactionDetails=accounts``."""
+        tx = raw.get("transaction") or {}
+        meta = raw.get("meta") or {}
+        keys = _parse_account_keys(tx.get("accountKeys") or [])
+        signatures = tx.get("signatures") or [""]
+        return cls(
+            signature=signatures[0],
+            success=meta.get("err") is None,
+            fee_lamports=int(meta.get("fee", 0)),
+            signer=keys[0].pubkey if keys else None,
+            is_vote=any(key.pubkey == VOTE_PROGRAM_ID for key in keys),
+        )
+
+
+@dataclass(frozen=True)
+class BlockSummary:
+    slot: int
+    blockhash: str
+    previous_blockhash: str | None
+    parent_slot: int | None
+    block_time: datetime | None
+    block_height: int | None
+    transaction_count: int
+    leader: str | None
+    leader_reward_lamports: int
+    transactions: tuple[BlockTransaction, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        data = to_jsonable(self)
+        data["leader_reward_sol"] = to_jsonable(lamports_to_sol(self.leader_reward_lamports))
+        data["vote_transaction_count"] = sum(1 for tx in self.transactions if tx.is_vote)
+        return data
+
+    @classmethod
+    def from_rpc(cls, slot: int, raw: dict[str, Any]) -> BlockSummary:
+        """Build from ``getBlock`` with ``signatures`` or ``accounts`` transaction details."""
+        transactions = tuple(BlockTransaction.from_rpc(tx) for tx in raw.get("transactions") or [])
+        count = len(transactions) if "transactions" in raw else len(raw.get("signatures") or [])
+        fee_rewards = [r for r in raw.get("rewards") or [] if r.get("rewardType") == "Fee"]
+        return cls(
+            slot=slot,
+            blockhash=raw.get("blockhash", ""),
+            previous_blockhash=raw.get("previousBlockhash"),
+            parent_slot=raw.get("parentSlot"),
+            block_time=_timestamp(raw.get("blockTime")),
+            block_height=raw.get("blockHeight"),
+            transaction_count=count,
+            leader=fee_rewards[0].get("pubkey") if fee_rewards else None,
+            leader_reward_lamports=sum(int(r.get("lamports", 0)) for r in fee_rewards),
+            transactions=transactions,
+        )
+
+
+# -- network ------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PerformanceSample:
+    slot: int
+    num_transactions: int
+    num_non_vote_transactions: int | None
+    num_slots: int
+    period_secs: int
+
+    @property
+    def tps(self) -> float:
+        return self.num_transactions / self.period_secs if self.period_secs else 0.0
+
+    @property
+    def non_vote_tps(self) -> float | None:
+        if self.num_non_vote_transactions is None or not self.period_secs:
+            return None
+        return self.num_non_vote_transactions / self.period_secs
+
+    @classmethod
+    def from_rpc(cls, raw: dict[str, Any]) -> PerformanceSample:
+        return cls(
+            slot=int(raw.get("slot", 0)),
+            num_transactions=int(raw.get("numTransactions", 0)),
+            num_non_vote_transactions=raw.get("numNonVoteTransactions"),
+            num_slots=int(raw.get("numSlots", 0)),
+            period_secs=int(raw.get("samplePeriodSecs", 0)),
+        )
+
+
+@dataclass(frozen=True)
+class NetworkStats:
+    epoch: int
+    slot_index: int
+    slots_in_epoch: int
+    absolute_slot: int
+    block_height: int | None
+    transaction_count: int | None
+    samples: tuple[PerformanceSample, ...]  # newest first
+    total_supply_lamports: int | None
+    circulating_supply_lamports: int | None
+    node_version: str | None
+
+    @property
+    def epoch_progress(self) -> float:
+        return self.slot_index / self.slots_in_epoch if self.slots_in_epoch else 0.0
+
+    @property
+    def average_slot_seconds(self) -> float | None:
+        slots = sum(s.num_slots for s in self.samples)
+        seconds = sum(s.period_secs for s in self.samples)
+        return seconds / slots if slots else None
+
+    @property
+    def epoch_eta_seconds(self) -> float | None:
+        slot_time = self.average_slot_seconds
+        if slot_time is None:
+            return None
+        return (self.slots_in_epoch - self.slot_index) * slot_time
+
+    @property
+    def tps(self) -> float | None:
+        return self.samples[0].tps if self.samples else None
+
+    @property
+    def non_vote_tps(self) -> float | None:
+        return self.samples[0].non_vote_tps if self.samples else None
+
+    def to_dict(self) -> dict[str, Any]:
+        def sol(lamports: int | None) -> str | None:
+            return None if lamports is None else to_jsonable(lamports_to_sol(lamports))
+
+        data = to_jsonable(self)
+        data["samples"] = [
+            {**to_jsonable(s), "tps": s.tps, "non_vote_tps": s.non_vote_tps} for s in self.samples
+        ]
+        data.update(
+            epoch_progress=self.epoch_progress,
+            average_slot_seconds=self.average_slot_seconds,
+            epoch_eta_seconds=self.epoch_eta_seconds,
+            tps=self.tps,
+            non_vote_tps=self.non_vote_tps,
+            total_supply_sol=sol(self.total_supply_lamports),
+            circulating_supply_sol=sol(self.circulating_supply_lamports),
+        )
+        return data
+
+
+# -- tokens -------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TokenHolding:
+    token_account: str
+    mint: str
+    amount: Decimal
+    decimals: int
+    program: str  # "spl-token" or "spl-token-2022"
+    name: str | None = None
+    symbol: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return to_jsonable(self)
+
+    @classmethod
+    def from_rpc(cls, raw: dict[str, Any]) -> TokenHolding | None:
+        """Build from one ``getTokenAccountsByOwner`` (``jsonParsed``) entry."""
+        data = (raw.get("account") or {}).get("data") or {}
+        info = (data.get("parsed") or {}).get("info") or {}
+        token_amount = info.get("tokenAmount") or {}
+        if "mint" not in info:
+            return None
+        decimals = int(token_amount.get("decimals", 0))
+        return cls(
+            token_account=raw.get("pubkey", ""),
+            mint=info["mint"],
+            amount=scale_amount(int(token_amount.get("amount", 0)), decimals),
+            decimals=decimals,
+            program=data.get("program", "spl-token"),
+        )
+
+
+@dataclass(frozen=True)
+class TokenHolder:
+    token_account: str
+    amount: Decimal
+    share: float | None  # fraction of total supply
+
+    def to_dict(self) -> dict[str, Any]:
+        return to_jsonable(self)
+
+
+@dataclass(frozen=True)
+class TokenInfo:
+    mint: str
+    program: str | None
+    decimals: int
+    supply: Decimal
+    mint_authority: str | None
+    freeze_authority: str | None
+    extensions: tuple[str, ...]
+    name: str | None = None
+    symbol: str | None = None
+    metadata_source: str | None = None
+    uri: str | None = None
+    image: str | None = None
+    description: str | None = None
+    website: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return to_jsonable(self)
+
+    @classmethod
+    def from_account(cls, account: AccountSummary) -> TokenInfo:
+        info = (account.parsed or {}).get("info") or {}
+        decimals = int(info.get("decimals", 0))
+        return cls(
+            mint=account.address,
+            program=account.program,
+            decimals=decimals,
+            supply=scale_amount(int(info.get("supply", 0)), decimals),
+            mint_authority=info.get("mintAuthority"),
+            freeze_authority=info.get("freezeAuthority"),
+            extensions=tuple(
+                ext.get("extension", "") for ext in info.get("extensions") or [] if ext
+            ),
         )

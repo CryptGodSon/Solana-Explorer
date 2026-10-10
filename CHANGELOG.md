@@ -12,6 +12,9 @@ fetch any transaction.
 
 ### Added
 
+- Browser-based block explorer (`solana-explorer web`) in the style of Solscan: network dashboard with live TPS chart, latest blocks and transactions, plus pages for transactions, accounts, tokens and blocks, with search, a cluster switcher and dark and light themes.
+- Token metadata: names and symbols from Metaplex and Token-2022, and logos and descriptions from off-chain JSON (private addresses are never fetched).
+- Explorer API for network stats, SOL supply, blocks, token holdings, token info and top holders.
 - Installable Python package (`pip install`) with `solana-explorer` and `solana-explorer-gui` commands.
 - JSON-RPC client with timeouts, retries and exponential backoff on HTTP 429/5xx.
 - Transaction decoding (legacy, v0 and newer versions with automatic version negotiation): status, fee, compute units, signers, SOL and SPL-token transfers (including inner instructions), SOL and token balance changes, and the instruction tree.

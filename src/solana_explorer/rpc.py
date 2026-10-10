@@ -6,6 +6,7 @@ import contextlib
 import itertools
 import os
 import re
+import threading
 import time
 from typing import Any
 
@@ -17,7 +18,7 @@ from .errors import InvalidInputError, RpcError, RpcTransportError
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 DEFAULT_COMMITMENT = "confirmed"
-_MAX_RETRY_AFTER = 30.0
+_MAX_RETRY_AFTER = 10.0
 
 TRANSACTION_VERSION_NOT_SUPPORTED = -32015
 _VERSION_HINT = re.compile(r'"?maxSupportedTransactionVersion"?\s*:\s*(\d+)')
@@ -77,12 +78,33 @@ class SolanaRpcClient:
         self.backoff = max(0.0, backoff)
         self.commitment = commitment
         self.max_transaction_version = 0
-        self._session = session or requests.Session()
-        self._session.headers.setdefault("User-Agent", f"solana-explorer/{__version__}")
+        self._shared_session = session
+        self._local = threading.local()
+        self._sessions: list[requests.Session] = []
+        self._sessions_lock = threading.Lock()
         self._ids = itertools.count(1)
 
+    @property
+    def _session(self) -> requests.Session:
+        """The injected session, or one ``requests.Session`` per thread (not thread-safe)."""
+        if self._shared_session is not None:
+            return self._shared_session
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            session.headers["User-Agent"] = f"solana-explorer/{__version__}"
+            self._local.session = session
+            with self._sessions_lock:
+                self._sessions.append(session)
+        return session
+
     def close(self) -> None:
-        self._session.close()
+        if self._shared_session is not None:
+            self._shared_session.close()
+        with self._sessions_lock:
+            for session in self._sessions:
+                session.close()
+            self._sessions.clear()
 
     def __enter__(self) -> SolanaRpcClient:
         return self
@@ -150,34 +172,70 @@ class SolanaRpcClient:
 
     # -- typed helpers -----------------------------------------------------
 
-    def get_transaction(self, signature: str) -> dict[str, Any] | None:
-        """``getTransaction`` with ``jsonParsed`` encoding (``None`` when not found).
+    def _call_versioned(self, method: str, target: Any, options: dict[str, Any]) -> Any:
+        """Call a method that takes ``maxSupportedTransactionVersion``.
 
-        If the node reports that the transaction uses a newer version than we
+        If the node reports that the data uses a newer transaction version than we
         advertised, the request is retried once with the version it asks for, and
         that version is remembered for later calls.
         """
+
+        def attempt() -> Any:
+            params = {**options, "maxSupportedTransactionVersion": self.max_transaction_version}
+            return self.call(method, [target, params])
+
         try:
-            return self._get_transaction(signature)
+            return attempt()
         except RpcError as exc:
             required = _required_transaction_version(exc)
             if required is None or required <= self.max_transaction_version:
                 raise
             self.max_transaction_version = required
-            return self._get_transaction(signature)
+            return attempt()
 
-    def _get_transaction(self, signature: str) -> dict[str, Any] | None:
-        return self.call(
-            "getTransaction",
-            [
-                signature,
-                {
-                    "encoding": "jsonParsed",
-                    "commitment": self.commitment,
-                    "maxSupportedTransactionVersion": self.max_transaction_version,
-                },
-            ],
+    def get_transaction(self, signature: str) -> dict[str, Any] | None:
+        """``getTransaction`` with ``jsonParsed`` encoding (``None`` when not found)."""
+        return self._call_versioned(
+            "getTransaction", signature, {"encoding": "jsonParsed", "commitment": self.commitment}
         )
+
+    def get_block(
+        self, slot: int, *, transaction_details: str = "signatures", rewards: bool = True
+    ) -> dict[str, Any] | None:
+        """``getBlock``; details: ``signatures``, ``accounts``, ``full`` or ``none``."""
+        return self._call_versioned(
+            "getBlock",
+            slot,
+            {
+                "encoding": "jsonParsed",
+                "transactionDetails": transaction_details,
+                "rewards": rewards,
+                "commitment": self.commitment,
+            },
+        )
+
+    def get_blocks(self, start_slot: int, end_slot: int) -> list[int]:
+        """Slots between ``start_slot`` and ``end_slot`` (inclusive) that produced a block."""
+        return self.call("getBlocks", [start_slot, end_slot, {"commitment": self.commitment}]) or []
+
+    def get_slot(self) -> int:
+        return int(self.call("getSlot", [{"commitment": self.commitment}]))
+
+    def get_epoch_info(self) -> dict[str, Any]:
+        return self.call("getEpochInfo", [{"commitment": self.commitment}])
+
+    def get_recent_performance_samples(self, limit: int = 30) -> list[dict[str, Any]]:
+        return self.call("getRecentPerformanceSamples", [limit]) or []
+
+    def get_supply(self) -> dict[str, Any]:
+        result = self.call(
+            "getSupply",
+            [{"commitment": self.commitment, "excludeNonCirculatingAccountsList": True}],
+        )
+        return result.get("value") or {}
+
+    def get_version(self) -> dict[str, Any]:
+        return self.call("getVersion")
 
     def get_account_info(self, address: str) -> dict[str, Any] | None:
         """``getAccountInfo`` with ``jsonParsed`` encoding (``None`` when the account is empty)."""
@@ -186,6 +244,31 @@ class SolanaRpcClient:
             [address, {"encoding": "jsonParsed", "commitment": self.commitment}],
         )
         return result.get("value") if isinstance(result, dict) else None
+
+    def get_multiple_accounts(
+        self, addresses: list[str], *, encoding: str = "base64"
+    ) -> list[dict[str, Any] | None]:
+        """``getMultipleAccounts`` (the node accepts at most 100 addresses per call)."""
+        result = self.call(
+            "getMultipleAccounts",
+            [addresses, {"encoding": encoding, "commitment": self.commitment}],
+        )
+        return result.get("value") or []
+
+    def get_token_accounts_by_owner(self, owner: str, program_id: str) -> list[dict[str, Any]]:
+        result = self.call(
+            "getTokenAccountsByOwner",
+            [
+                owner,
+                {"programId": program_id},
+                {"encoding": "jsonParsed", "commitment": self.commitment},
+            ],
+        )
+        return result.get("value") or []
+
+    def get_token_largest_accounts(self, mint: str) -> list[dict[str, Any]]:
+        result = self.call("getTokenLargestAccounts", [mint, {"commitment": self.commitment}])
+        return result.get("value") or []
 
     def get_signatures_for_address(
         self, address: str, *, limit: int = 10, before: str | None = None

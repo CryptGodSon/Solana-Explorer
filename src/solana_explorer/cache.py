@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections import OrderedDict
+from collections.abc import Callable
 from typing import Generic, TypeVar
 
 K = TypeVar("K")
@@ -47,3 +49,32 @@ class LRUCache(Generic[K, V]):
     def __len__(self) -> int:
         with self._lock:
             return len(self._data)
+
+
+class TTLCache(Generic[K, V]):
+    """Small thread-safe cache whose entries expire after ``ttl`` seconds."""
+
+    def __init__(self, ttl: float, clock: Callable[[], float] = time.monotonic) -> None:
+        self.ttl = ttl
+        self._clock = clock
+        self._data: dict[K, tuple[float, V]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: K) -> V | None:
+        with self._lock:
+            entry = self._data.get(key)
+            if entry is None:
+                return None
+            expires, value = entry
+            if self._clock() >= expires:
+                del self._data[key]
+                return None
+            return value
+
+    def put(self, key: K, value: V) -> None:
+        with self._lock:
+            self._data[key] = (self._clock() + self.ttl, value)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()

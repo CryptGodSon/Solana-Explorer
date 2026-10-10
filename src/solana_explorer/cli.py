@@ -26,6 +26,7 @@ examples:
   solana-explorer account <ADDRESS>
   solana-explorer history <ADDRESS> --limit 25
   solana-explorer gui
+  solana-explorer web
 
 The RPC endpoint defaults to ${RPC_URL_ENV_VAR} or, if unset, public mainnet-beta.
 """
@@ -95,7 +96,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     history.add_argument("--before", metavar="SIGNATURE", help="start searching before this one")
 
-    commands.add_parser("gui", parents=[network], help="open the graphical interface")
+    commands.add_parser("gui", parents=[network], help="open the desktop (tkinter) interface")
+
+    web = commands.add_parser(
+        "web", parents=[network], help="start the browser-based block explorer"
+    )
+    web.add_argument("--host", default="127.0.0.1", help="interface to bind (default: 127.0.0.1)")
+    web.add_argument("-p", "--port", type=int, default=8000, help="port (default: 8000)")
+    web.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
+    web.add_argument("-v", "--verbose", action="store_true", help="log every HTTP request")
     return parser
 
 
@@ -173,6 +182,21 @@ def main(
         from .gui import run
 
         run(endpoint)
+        return 0
+
+    if args.command == "web":
+        from .web import serve
+
+        try:
+            serve(
+                endpoint,
+                host=args.host,
+                port=args.port,
+                open_browser=not args.no_browser,
+                quiet=not args.verbose,
+            )
+        except InvalidInputError as exc:
+            parser.exit(2, f"{parser.prog}: error: {exc}\n")
         return 0
 
     try:

@@ -2,7 +2,7 @@
 
 # Solana Explorer
 
-**Inspect Solana transactions and accounts from the terminal, a desktop GUI, or your own Python code.**
+**A Solscan-style Solana block explorer you run on your own machine, plus a CLI, a desktop GUI and a Python API.**
 
 [![CI](https://github.com/CryptGodSon/Solana-Explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/CryptGodSon/Solana-Explorer/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -11,13 +11,29 @@
 </div>
 
 Solana Explorer talks directly to any Solana JSON-RPC node and turns the raw
-responses into readable reports: status, fees, SOL and SPL-token transfers,
-balance changes, and the full instruction tree (including inner instructions).
-It has a single runtime dependency (`requests`) and needs no API key.
+responses into readable pages and reports: live network stats, blocks,
+transactions with decoded SOL and SPL-token transfers, balance changes, the full
+instruction tree, wallets with their token holdings, and token pages with logos,
+supply and top holders. It has a single runtime dependency (`requests`) and needs
+no API key.
+
+<p align="center"><img src="docs/images/home.png" alt="Solana Explorer web UI: network stats, latest blocks and transactions" width="900"></p>
 
 ## Features
 
-- **Transaction details**: status and error, slot, block time, fee, compute units, signers, version (legacy / v0)
+**Web explorer** (`solana-explorer web`)
+
+- **Dashboard** with SOL supply, epoch progress and ETA, slot and block height, TPS (total and non-vote) with a live chart, latest blocks and latest non-vote transactions, refreshed automatically
+- **Transaction pages**: overview, transfers, SOL and token balance changes, expandable instructions with decoded arguments, program logs, and raw JSON
+- **Account pages** that recognise wallets, token mints, token accounts, programs, and vote and stake accounts, with paginated history and token holdings
+- **Token pages**: name, symbol and logo (from Metaplex or Token-2022 metadata), supply, authorities, extensions, and top holders
+- **Block pages** with leader, rewards and a transaction list that can hide vote transactions
+- One search box for signatures, addresses, tokens and block numbers; cluster switcher; dark and light themes; works on phones
+- Shareable URLs like Solscan (`/tx/<sig>`, `/account/<address>`, `/block/<slot>`, with `#logs` style deep links to tabs)
+
+**Everywhere** (CLI, GUI, Python API)
+
+- **Transaction details**: status and error, slot, block time, fee, compute units, signers, version (legacy, v0 and v1+)
 - **Decoded transfers**: SOL transfers and SPL Token / Token-2022 `transfer` and `transferChecked`, including transfers made by inner instructions (for example inside DEX swaps)
 - **Balance changes**: per-account SOL and token deltas, computed from pre/post balances
 - **Instruction tree**: top-level and inner instructions in execution order, with well-known programs labelled (System, Token, Jupiter, Raydium, Orca and others)
@@ -42,7 +58,7 @@ pipx install git+https://github.com/CryptGodSon/Solana-Explorer.git
 pip install git+https://github.com/CryptGodSon/Solana-Explorer.git
 ```
 
-This installs two commands: `solana-explorer` (CLI) and `solana-explorer-gui` (desktop app).
+This installs `solana-explorer` (the CLI and the `web` command) and `solana-explorer-gui` (the desktop app).
 
 <details>
 <summary>Install from a local clone</summary>
@@ -59,7 +75,28 @@ pip install -e .
 
 > **Linux:** the GUI needs tkinter. If `python -m tkinter` fails, install it with `sudo apt install python3-tk` (Debian/Ubuntu) or `sudo dnf install python3-tkinter` (Fedora). The CLI works without it.
 
-## Quick start
+## Web explorer
+
+```bash
+solana-explorer web                      # opens http://127.0.0.1:8000 in your browser
+solana-explorer web --cluster devnet     # start on devnet
+solana-explorer web --rpc-url https://my-rpc.example.com --port 9000 --no-browser
+```
+
+| Transaction | Token |
+| --- | --- |
+| <img src="docs/images/transaction.png" alt="Transaction page" width="440"> | <img src="docs/images/token.png" alt="Token page" width="440"> |
+
+The server listens on `127.0.0.1` only. It answers only requests whose `Host`
+header is a loopback name, which blocks DNS-rebinding attacks, and it serves a
+strict Content-Security-Policy. Use `--host 0.0.0.0` only if you deliberately
+want other machines on your network to reach it.
+
+> The public `api.mainnet-beta.solana.com` endpoint is rate-limited. The explorer
+> caches heavily, but heavy methods such as top token holders may still be refused.
+> For a smooth experience, pass your own RPC URL with `--rpc-url` or `SOLANA_RPC_URL`.
+
+## Quick start (CLI)
 
 ```bash
 solana-explorer tx 5gg257Zuqdn5uuFcbMFo6ZqoSSzXWdZiKKqcTaRKV9diiAJ9LNzV1c2G9uMJ2MpRVhCcjAFP7Q9U7naZpq6VgLuS
@@ -102,6 +139,7 @@ Instructions (20)
 | `solana-explorer tx SIG --logs` | Also print program log messages |
 | `solana-explorer account ADDRESS` | Balance, owner, and token-account or mint details |
 | `solana-explorer history ADDRESS -n 25` | The latest 25 signatures for an address (`--before SIG` to page back) |
+| `solana-explorer web` | Start the browser-based explorer (`--port`, `--host`, `--no-browser`) |
 | `solana-explorer gui` | Open the desktop app |
 
 Options available on every command:
@@ -179,8 +217,14 @@ dedicated RPC provider and pass its URL with `--rpc-url` or `SOLANA_RPC_URL`.
 
 ## How it works
 
-The tool uses the standard Solana JSON-RPC methods `getTransaction` (with
-`jsonParsed` encoding), `getAccountInfo` and `getSignaturesForAddress`. Legacy,
+The tool uses only standard Solana JSON-RPC methods: `getTransaction`,
+`getBlock`, `getBlocks`, `getAccountInfo`, `getMultipleAccounts`,
+`getSignaturesForAddress`, `getTokenAccountsByOwner`, `getTokenLargestAccounts`,
+`getEpochInfo`, `getRecentPerformanceSamples`, `getSupply` and `getVersion`.
+Token names come from the Metaplex metadata account (its address is derived
+locally, with a pure-Python ed25519 curve check) or from the Token-2022 metadata
+extension. Logos are read from the off-chain JSON the metadata points to, which
+is never fetched from private or loopback addresses. Legacy,
 v0 and newer transaction versions are all supported: if the node reports that a
 transaction needs a higher `maxSupportedTransactionVersion`, the client retries
 with that version and uses it from then on. Transfers are decoded from the node's
@@ -195,16 +239,21 @@ failed transaction moves no funds apart from the fee.
 Solana-Explorer/
 ├── src/solana_explorer/
 │   ├── cli.py          # argparse CLI (tx / account / history / gui)
+│   ├── web/
+│   │   ├── server.py   # local HTTP server: JSON API + single-page app
+│   │   └── static/     # index.html, app.js, style.css (no build step)
 │   ├── gui.py          # tkinter desktop app
 │   ├── explorer.py     # high-level API: validation, caching, batch lookups
 │   ├── rpc.py          # JSON-RPC client with retries and cluster resolution
 │   ├── models.py       # typed dataclasses and RPC response parsing
 │   ├── formatting.py   # plain-text reports shared by the CLI and GUI
+│   ├── metadata.py     # token names/logos (Metaplex, Token-2022), PDA derivation
 │   ├── validation.py   # base58 signature and address validation
 │   ├── cache.py        # thread-safe LRU cache
 │   ├── constants.py    # clusters, well-known programs and tokens
 │   └── errors.py       # exception hierarchy
 ├── tests/              # pytest suite (no network access needed)
+├── docs/images/        # screenshots used in this README
 ├── .github/workflows/  # CI: ruff + pytest on Linux, Windows and macOS
 └── pyproject.toml
 ```

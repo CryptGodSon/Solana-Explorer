@@ -51,7 +51,7 @@ version = { attr = "solana_explorer._version.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-solana_explorer = ["py.typed"]
+solana_explorer = ["py.typed", "web/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -27,7 +27,11 @@ class RpcError(SolanaExplorerError):
         self.data = data
 
 
-class TransactionNotFoundError(SolanaExplorerError):
+class NotFoundError(SolanaExplorerError):
+    """Raised when the node has no record of the requested object."""
+
+
+class TransactionNotFoundError(NotFoundError):
     """Raised when the node has no record of the requested transaction."""
 
     def __init__(self, signature: str) -> None:
