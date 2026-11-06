@@ -4,19 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Solana Explorer</title>
-  <meta name="description" content="Explore Solana transactions, accounts, tokens and blocks.">
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <meta name="description" content="Open-source Solana block explorer: transactions, accounts, tokens, blocks and live network stats, straight from Solana RPC.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https: data:; connect-src https:; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="assets/style.css">
+  <script src="assets/config.js" defer></script>
+  <script src="assets/format.js" defer></script>
+  <script src="assets/backend.js" defer></script>
+  <script src="assets/app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <a href="/" class="brand" aria-label="Solana Explorer home">
-        <img src="/static/favicon.svg" alt="" width="28" height="28">
+      <a href="#/" class="brand" aria-label="Solana Explorer home">
+        <img src="assets/favicon.svg" alt="" width="28" height="28">
         <span>Solana<strong>Explorer</strong></span>
       </a>
       <form class="search search-compact" id="header-search" role="search">
@@ -36,12 +41,15 @@
     </div>
   </header>
 
-  <main id="app" class="container" aria-live="polite"></main>
+  <main id="app" class="container" aria-live="polite">
+    <noscript><div class="card"><div class="error-box"><h2>JavaScript required</h2><p>This explorer runs entirely in your browser.</p></div></div></noscript>
+  </main>
 
   <footer class="footer">
     <div class="container footer-inner">
       <span>Solana Explorer <span id="app-version"></span> &middot; open source, MIT licensed</span>
-      <a href="https://github.com/CryptGodSon/Solana-Explorer" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <span>RPC: <span id="rpc-host" class="mono"></span> &middot; <a href="#" data-action="custom-rpc">use your own</a> &middot;
+        <a href="https://github.com/CryptGodSon/Solana-Explorer" target="_blank" rel="noopener noreferrer">GitHub</a></span>
     </div>
   </footer>
 

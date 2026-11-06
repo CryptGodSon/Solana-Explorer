@@ -1,77 +1,50 @@
 "use strict";
 
-/* Solana Explorer single-page app. Talks only to the local /api/* endpoints. */
+/*
+ * Solana Explorer single-page app.
+ * Data comes from backend.js (Solana RPC, called from the browser); pages are
+ * addressed with the URL hash (#/tx/<sig>, #/account/<address>, #/block/<slot>)
+ * so the site works on any static host, including GitHub Pages.
+ */
 
-const state = { config: null, cluster: null, navId: 0, timers: [] };
+const { esc, short, fmtDec, signed, lamportsToSol, fmtInt, compact, ago, utc, duration } = window.SolanaFormat;
+const backend = window.SolanaBackend.createBackend(window.SOLANA_EXPLORER_CONFIG);
+
+const state = {
+  config: backend.config,
+  cluster: null,
+  route: { path: "/", params: new URLSearchParams() },
+  navId: 0,
+  timers: [],
+  lazyTabs: {},
+};
 const app = document.getElementById("app");
 const REFRESH_MS = 15000;
 const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
+/* ---------------------------------------------------------------- routing */
+
+/** "#/tx/<sig>?cluster=devnet&tab=logs" -> { path: "/tx/<sig>", params } */
+function parseHash() {
+  const raw = location.hash.replace(/^#/, "") || "/";
+  const [path, query = ""] = raw.split("?");
+  return { path: path || "/", params: new URLSearchParams(query) };
+}
+
+function hashFor(path, extra = {}, cluster = state.cluster) {
+  const params = new URLSearchParams();
+  if (cluster && cluster !== state.config.default_cluster) params.set("cluster", cluster);
+  for (const [key, value] of Object.entries(extra)) if (value !== null && value !== undefined) params.set(key, value);
+  const query = params.toString();
+  return `#${path}${query ? "?" + query : ""}`;
+}
+
+const link = (path) => hashFor(path);
+
+/** ?cluster= suffix for links to other explorers (they only know the public clusters). */
+const externalClusterQuery = () => (["devnet", "testnet"].includes(state.cluster) ? `?cluster=${state.cluster}` : "");
+
 /* ---------------------------------------------------------------- helpers */
-
-const esc = (value) =>
-  String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-
-function short(value, head = 6, tail = 6) {
-  const s = String(value ?? "");
-  return s.length > head + tail + 3 ? `${s.slice(0, head)}...${s.slice(-tail)}` : s;
-}
-
-function fmtDec(value, maxFrac = null) {
-  if (value === null || value === undefined || value === "") return "-";
-  let s = String(value);
-  const neg = s.startsWith("-");
-  if (neg || s.startsWith("+")) s = s.slice(1);
-  let [int, frac = ""] = s.split(".");
-  if (maxFrac !== null && frac.length > maxFrac) frac = frac.slice(0, maxFrac).replace(/0+$/, "");
-  int = int.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return (neg ? "-" : "") + int + (frac ? "." + frac : "");
-}
-
-function signed(value) {
-  const s = String(value);
-  return s.startsWith("-") ? fmtDec(s) : "+" + fmtDec(s);
-}
-
-function lamportsToSol(lamports) {
-  const n = BigInt(Math.round(Number(lamports) || 0));
-  const neg = n < 0n;
-  const abs = neg ? -n : n;
-  const int = abs / 1000000000n;
-  const frac = (abs % 1000000000n).toString().padStart(9, "0").replace(/0+$/, "");
-  return (neg ? "-" : "") + int.toString() + (frac ? "." + frac : "");
-}
-
-const fmtInt = (n) => (n === null || n === undefined ? "-" : Number(n).toLocaleString("en-US"));
-
-function compact(n) {
-  if (n === null || n === undefined) return "-";
-  return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(Number(n));
-}
-
-function ago(iso) {
-  if (!iso) return "-";
-  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-  if (s < 60) return `${Math.floor(s)}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
-
-const utc = (iso) => (iso ? new Date(iso).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "-");
-
-function duration(seconds) {
-  if (seconds === null || seconds === undefined) return "-";
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
-}
-
-function link(path) {
-  const def = state.config?.default_cluster;
-  return state.cluster && state.cluster !== def ? `${path}?cluster=${encodeURIComponent(state.cluster)}` : path;
-}
 
 const COPY_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h11a2 2 0 0 1 2 2v11h-2V5H8V3Zm-3 4h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Zm0 2v11h11V9H5Z"/></svg>';
@@ -119,29 +92,13 @@ function toast(message) {
   el.textContent = message;
   el.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => (el.hidden = true), 1600);
+  toast.timer = setTimeout(() => (el.hidden = true), 2400);
 }
 
 /* -------------------------------------------------------------------- api */
 
-class ApiError extends Error {
-  constructor(message, status) {
-    super(message);
-    this.status = status;
-  }
-}
-
-async function api(path, params = {}) {
-  const query = new URLSearchParams({ ...params, cluster: state.cluster || "" });
-  const response = await fetch(`${path}?${query}`, { headers: { Accept: "application/json" } });
-  let body = null;
-  try {
-    body = await response.json();
-  } catch {
-    /* fall through */
-  }
-  if (!response.ok) throw new ApiError(body?.error || `Request failed (HTTP ${response.status})`, response.status);
-  return body;
+function api(path, params = {}) {
+  return backend.handle(path, { ...params, cluster: state.cluster });
 }
 
 /* ----------------------------------------------------------------- layout */
@@ -165,7 +122,8 @@ function errorBox(error, title = "Something went wrong") {
   const limited = error?.status === 429;
   return `<div class="error-box"><h2>${esc(notFound ? "Not found" : limited ? "Rate limited" : title)}</h2>
     <p>${esc(error?.message || String(error))}</p>
-    ${limited ? '<p class="faint">The public RPC node limits request rates. Wait a moment and reload, or start the explorer with a dedicated RPC URL (--rpc-url).</p>' : ""}</div>`;
+    ${limited ? '<p class="faint">The RPC node limits request rates. Wait a moment and reload, or add your own RPC URL.</p>' : ""}
+    ${limited || error?.status === 403 ? '<p><button class="btn" type="button" data-action="custom-rpc">Add your RPC URL</button></p>' : ""}</div>`;
 }
 
 function tabs(id, items) {
@@ -202,9 +160,9 @@ async function renderHome(nav) {
     </div>`;
 
   let supply = null;
-  api("/api/supply").then((s) => {
-    supply = s;
-  }).catch(() => {});
+  api("/api/supply")
+    .then((s) => (supply = s))
+    .catch((error) => (supply = { error }));
 
   const refresh = async () => {
     if (document.hidden) return;
@@ -252,8 +210,8 @@ function statCards(n, supply) {
   return `
     <div class="card stat">
       <div class="stat-label">SOL Supply</div>
-      <div class="stat-value">${total ? compact(total) : sk} <small>SOL</small></div>
-      <div class="stat-sub">${circ ? `Circulating ${compact(circ)} (${circPct.toFixed(1)}%)` : "Loading supply..."}</div>
+      <div class="stat-value">${total ? compact(total) : supply?.error ? "-" : sk} <small>SOL</small></div>
+      <div class="stat-sub">${circ ? `Circulating ${compact(circ)} (${circPct.toFixed(1)}%)` : supply?.error ? 'Not offered by this RPC &middot; <a href="#" data-action="custom-rpc">add yours</a>' : "Loading supply..."}</div>
       <div class="progress"><span style="width:${circPct ?? 0}%"></span></div>
     </div>
     <div class="card stat">
@@ -498,7 +456,7 @@ async function renderAccount(nav, address) {
     <div class="grid-2" style="margin-top:0">${card("Overview", kv(overviewRows))}${tokenCard || card("More info", kv([
       ["Account type", esc(KIND_LABELS[kind] || kind)],
       ["Parser", esc(account.program || "-")],
-      ["Explorer links", `<a href="https://solscan.io/account/${esc(address)}${state.cluster !== "mainnet-beta" ? "?cluster=" + esc(state.cluster) : ""}" target="_blank" rel="noopener noreferrer">Solscan</a> &middot; <a href="https://explorer.solana.com/address/${esc(address)}${state.cluster !== "mainnet-beta" ? "?cluster=" + esc(state.cluster) : ""}" target="_blank" rel="noopener noreferrer">Solana Explorer</a>`],
+      ["Explorer links", `<a href="https://solscan.io/account/${esc(address)}${externalClusterQuery()}" target="_blank" rel="noopener noreferrer">Solscan</a> &middot; <a href="https://explorer.solana.com/address/${esc(address)}${externalClusterQuery()}" target="_blank" rel="noopener noreferrer">Solana Explorer</a>`],
     ]))}</div>
     <section class="card" style="margin-top:20px">${tabs("acct", tabItems)}</section>`;
 
@@ -644,16 +602,16 @@ function activateTab(tab) {
   const [group] = tab.dataset.tab.split(":");
   document.querySelectorAll(`[data-tab^="${group}:"]`).forEach((b) => b.classList.toggle("active", b === tab));
   document.querySelectorAll(`[data-panel^="${group}:"]`).forEach((p) => (p.hidden = p.dataset.panel !== tab.dataset.tab));
-  const lazy = state.lazyTabs?.[tab.dataset.tab];
+  const lazy = state.lazyTabs[tab.dataset.tab];
   if (lazy) {
     delete state.lazyTabs[tab.dataset.tab];
     lazy();
   }
 }
 
-/** Open the tab named in the URL fragment (e.g. /tx/...#logs), like a deep link. */
-function activateTabFromHash() {
-  const key = decodeURIComponent(location.hash.slice(1));
+/** Open the tab named in the URL (e.g. #/tx/...?tab=logs), so tabs can be linked to. */
+function activateTabFromRoute() {
+  const key = state.route.params.get("tab");
   if (!key) return;
   const tab = [...document.querySelectorAll("[data-tab]")].find((b) => b.dataset.tab.split(":")[1] === key);
   if (tab) activateTab(tab);
@@ -676,25 +634,27 @@ async function router() {
   state.timers = [];
   state.lazyTabs = {};
   const nav = ++state.navId;
-  state.cluster = new URLSearchParams(location.search).get("cluster") || state.config.default_cluster;
+  state.route = parseHash();
+  const requested = state.route.params.get("cluster");
+  state.cluster = state.config.clusters.includes(requested) ? requested : state.config.default_cluster;
   document.getElementById("cluster-select").value = state.cluster;
+  updateRpcLabel();
   document.body.classList.remove("home");
   window.scrollTo(0, 0);
   for (const [pattern, render] of routes) {
-    const match = location.pathname.match(pattern);
+    const match = state.route.path.match(pattern);
     if (match) {
       await render(nav, ...match.slice(1).map(decodeURIComponent));
-      if (nav === state.navId) activateTabFromHash();
+      if (nav === state.navId) activateTabFromRoute();
       return;
     }
   }
   renderNotFound();
 }
 
-function navigate(path) {
-  if (path === location.pathname + location.search && !location.hash) return;
-  history.pushState(null, "", path);
-  router();
+function navigate(hash) {
+  if (location.hash === hash) router();
+  else location.hash = hash;
 }
 
 async function search(term) {
@@ -706,6 +666,47 @@ async function search(term) {
   } catch (error) {
     toast(error.message);
   }
+}
+
+/* ------------------------------------------------------------ custom RPC */
+
+function updateRpcLabel() {
+  const endpoint = backend.endpointFor(state.cluster);
+  let host = "not set";
+  try {
+    host = endpoint ? new URL(endpoint).host : host;
+  } catch {
+    /* keep "not set" */
+  }
+  document.getElementById("rpc-host").textContent = host;
+}
+
+/** Ask for an RPC URL; returns true when one was saved. */
+function promptCustomRpc() {
+  const url = window.prompt(
+    "Paste your Solana RPC URL (https://...).\n" +
+      "It is stored only in this browser. Free endpoints with full data are available from Helius, QuickNode, Alchemy and others.\n" +
+      "Leave empty to remove it.",
+    backend.customRpc() || "",
+  );
+  if (url === null) return false;
+  try {
+    backend.setCustomRpc(url);
+  } catch (error) {
+    toast(error.message);
+    return false;
+  }
+  if (!url.trim()) {
+    toast("Custom RPC removed");
+    navigate(hashFor("/", {}, state.config.default_cluster));
+    return false;
+  }
+  toast("Custom RPC saved");
+  return true;
+}
+
+function useCustomRpc() {
+  if (promptCustomRpc()) navigate(hashFor(state.route.path === "/" ? "/" : state.route.path, {}, "custom"));
 }
 
 /* ----------------------------------------------------------------- events */
@@ -729,24 +730,22 @@ document.addEventListener("click", (event) => {
   const tab = event.target.closest("[data-tab]");
   if (tab) {
     activateTab(tab);
-    history.replaceState(null, "", `${location.pathname}${location.search}#${tab.dataset.tab.split(":")[1]}`);
+    // replaceState does not fire "hashchange", so the page is not re-rendered.
+    history.replaceState(null, "", hashFor(state.route.path, { tab: tab.dataset.tab.split(":")[1] }));
+    state.route = parseHash();
     return;
   }
   const action = event.target.closest("[data-action]");
-  if (action?.dataset.action === "toggle-ix") {
+  if (!action) return;
+  if (action.dataset.action === "toggle-ix") {
     action.parentElement.classList.toggle("open");
-    return;
-  }
-  if (action?.dataset.action === "more-txs") {
+  } else if (action.dataset.action === "more-txs") {
     action.disabled = true;
     action.textContent = "Loading...";
     loadAccountTransactions(state.navId, action.dataset.address, action.dataset.before);
-    return;
-  }
-  const anchor = event.target.closest("a[href]");
-  if (anchor && anchor.origin === location.origin && !anchor.target && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.button === 0) {
+  } else if (action.dataset.action === "custom-rpc") {
     event.preventDefault();
-    navigate(anchor.pathname + anchor.search);
+    useCustomRpc();
   }
 });
 
@@ -759,9 +758,9 @@ document.addEventListener("submit", (event) => {
   input.blur();
 });
 
-window.addEventListener("popstate", router);
+window.addEventListener("hashchange", router);
 
-async function init() {
+function init() {
   let saved = null;
   try {
     saved = localStorage.getItem("theme");
@@ -773,18 +772,18 @@ async function init() {
     applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"),
   );
 
-  try {
-    state.config = await (await fetch("/api/config")).json();
-  } catch {
-    app.innerHTML = card("", errorBox({ message: "Cannot reach the explorer server. Is it still running?" }));
-    return;
-  }
   document.getElementById("app-version").textContent = "v" + state.config.version;
   const select = document.getElementById("cluster-select");
-  select.innerHTML = state.config.clusters.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  select.innerHTML = state.config.clusters
+    .map((c) => `<option value="${esc(c)}">${esc(c === "custom" ? "Custom RPC..." : c)}</option>`)
+    .join("");
   select.addEventListener("change", () => {
-    state.cluster = select.value;
-    navigate(link("/"));
+    const chosen = select.value;
+    if (chosen === "custom" && !backend.customRpc() && !promptCustomRpc()) {
+      select.value = state.cluster;
+      return;
+    }
+    navigate(hashFor("/", {}, chosen));
   });
   router();
 }
